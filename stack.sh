@@ -548,6 +548,9 @@ fi
 if [[ "$ENABLED_SERVICES" =~ "q-svc" ]]; then
     # quantum
     git_clone $QUANTUM_REPO $QUANTUM_DIR $QUANTUM_BRANCH
+    
+    # Setup the right python dependencies for Quantum
+    sudo PIP_DOWNLOAD_CACHE=/var/cache/pip pip install --use-mirrors `cat $QUANTUM_DIR/tools/pip-requires`    
 fi
 
 # Initialization
@@ -1219,6 +1222,7 @@ if [[ "$ENABLED_SERVICES" =~ "q-svc" ]]; then
     if [[ "$Q_PLUGIN" = "openvswitch" ]]; then
         # Install deps
         # FIXME add to files/apts/quantum, but don't install if not needed!
+        apt_get install linux-headers-$(uname -r)
         apt_get install openvswitch-switch openvswitch-datapath-dkms
         # Create database for the plugin/agent
         if [[ "$ENABLED_SERVICES" =~ "mysql" ]]; then
@@ -1227,11 +1231,16 @@ if [[ "$ENABLED_SERVICES" =~ "q-svc" ]]; then
             echo "mysql must be enabled in order to use the $Q_PLUGIN Quantum plugin."
             exit 1
         fi
-        QUANTUM_PLUGIN_INI_FILE=$QUANTUM_DIR/etc/plugins.ini
-        # Make sure we're using the openvswitch plugin
-        sed -i -e "s/^provider =.*$/provider = quantum.plugins.openvswitch.ovs_quantum_plugin.OVSQuantumPlugin/g" $QUANTUM_PLUGIN_INI_FILE
+
+    	QUANTUM_PLUGIN_INI_FILE=$QUANTUM_DIR/etc/plugins.ini
+    	# Make sure we're using the openvswitch plugin
+    	sed -i -e "s/^provider =.*$/provider = quantum.plugins.openvswitch.ovs_quantum_plugin.OVSQuantumPlugin/g" $QUANTUM_PLUGIN_INI_FILE
+    	OVS_QUANTUM_PLUGIN_INI_FILE=$QUANTUM_DIR/etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini
+    	sed -i -e "s/^user =.*$/user = $MYSQL_USER/g" $OVS_QUANTUM_PLUGIN_INI_FILE
+    	sed -i -e "s/^pass =.*$/pass = $MYSQL_PASSWORD/g" $OVS_QUANTUM_PLUGIN_INI_FILE
     fi
-    screen_it q-svc "cd $QUANTUM_DIR && PYTHONPATH=.:$PYTHONPATH python $QUANTUM_DIR/bin/quantum-server $QUANTUM_DIR/etc/quantum.conf"
+    
+    screen_it q-svc "cd $QUANTUM_DIR && export PYTHONPATH=.:$PYTHONPATH; python $QUANTUM_DIR/bin/quantum-server $QUANTUM_DIR/etc/quantum.conf"
 fi
 
 # Quantum agent (for compute nodes)
@@ -1245,7 +1254,7 @@ if [[ "$ENABLED_SERVICES" =~ "q-agt" ]]; then
     fi
 
     # Start up the quantum <-> openvswitch agent
-    screen_it q-agt "sleep 4; sudo python $QUANTUM_DIR/quantum/plugins/openvswitch/agent/ovs_quantum_agent.py $QUANTUM_DIR/etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini -v"
+    screen_it q-agt "sleep 4; sudo python $QUANTUM_DIR/quantum/plugins/openvswitch/agent/ovs_quantum_agent.py $OVS_QUANTUM_PLUGIN_INI_FILE -v"
 fi
 
 # If we're using Quantum (i.e. q-svc is enabled), network creation has to
